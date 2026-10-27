@@ -11,7 +11,7 @@ SPECIE         = [
     "Cantharellus cibarius", "Craterellus tubaeformis"
 ]
 
-ANNO_MIN_METEO = 2017       
+ANNO_MIN_METEO = 2021       
 MESI_STAGIONE  = (6, 11)    # giugno–novembre
 MAX_SFONDO     = 8000       
 PASSO_METEO    = 0.2        
