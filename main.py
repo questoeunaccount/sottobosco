@@ -11,7 +11,7 @@ SPECIE         = [
     "Cantharellus cibarius", "Craterellus tubaeformis"
 ]
 
-ANNO_MIN_METEO = 2024       # Ottimizzato per GitHub Actions per evitare timeout iniziali
+ANNO_MIN_METEO = 2019       # Ottimizzato per GitHub Actions per evitare timeout iniziali
 MESI_STAGIONE  = (6, 11)    # giugno–novembre
 MAX_SFONDO     = 8000       
 PASSO_METEO    = 0.2        
