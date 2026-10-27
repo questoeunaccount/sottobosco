@@ -11,7 +11,7 @@ SPECIE         = [
     "Cantharellus cibarius", "Craterellus tubaeformis"
 ]
 
-ANNO_MIN_METEO = 2021       
+ANNO_MIN_METEO = 2024       # Ottimizzato per GitHub Actions per evitare timeout iniziali
 MESI_STAGIONE  = (6, 11)    # giugno–novembre
 MAX_SFONDO     = 8000       
 PASSO_METEO    = 0.2        
@@ -278,13 +278,18 @@ K = NLAT * NLON
 def open_meteo(url, la, lo, extra):
     params = {"latitude": ",".join(f"{x:.3f}" for x in la), "longitude": ",".join(f"{x:.3f}" for x in lo), "daily": ",".join(METEO_VARS), "timezone": "Europe/Rome"}
     params.update(extra)
-    for tentativo in range(6):
-        r = requests.get(url, params=params, timeout=180)
-        if r.status_code == 429:
-            time.sleep(30 * (tentativo + 1))
-            continue
-        r.raise_for_status()
-        return r.json() if isinstance(r.json(), list) else [r.json()]
+    for tentativo in range(8):
+        try:
+            r = requests.get(url, params=params, timeout=300)
+            if r.status_code == 429:
+                time.sleep(20 * (tentativo + 1))
+                continue
+            r.raise_for_status()
+            return r.json() if isinstance(r.json(), list) else [r.json()]
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
+            if tentativo == 7:
+                raise RuntimeError(f"Errore di connessione persistente con Open-Meteo: {e}")
+            time.sleep(15 * (tentativo + 1))
     raise RuntimeError("Open-Meteo limite raggiunto.")
 
 def scarica_serie(url, extra):
@@ -295,18 +300,17 @@ def scarica_serie(url, extra):
             date_ = pd.to_datetime(r["daily"]["time"])
             elev.append(r.get("elevation", np.nan))
             for v in METEO_VARS: per_var[v].append(np.array(r["daily"][v], dtype=float))
-        time.sleep(1)
+        time.sleep(2)
     return date_, {v: np.column_stack(per_var[v]) for v in METEO_VARS}, np.array(elev, float).reshape(NLAT, NLON)
 
 def meteo_storico():
-    # Cache fissa indipendente dalla data odierna per evitare ricaricamenti inutili e timeout
     cache = os.path.join(OUT_DIR, f"meteo_{ANNO_MIN_METEO}_{PASSO_METEO}_storico.npz")
     if os.path.exists(cache):
         print("   Caricamento storico meteo da cache locale...")
         z = np.load(cache, allow_pickle=True)
         return pd.to_datetime(z["date"]), {v: z[v] for v in METEO_VARS}, z["elev"]
     
-    print("   Scaricamento storico meteo (operazione eseguita una sola volta)...")
+    print("   Scaricamento storico meteo...")
     date_all, serie, elev = [], {v: [] for v in METEO_VARS}, None
     for a in range(ANNO_MIN_METEO, OGGI.year + 1):
         fine = min(pd.Timestamp(f"{a}-11-30"), OGGI - pd.Timedelta(days=7))
