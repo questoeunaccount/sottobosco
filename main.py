@@ -299,10 +299,14 @@ def scarica_serie(url, extra):
     return date_, {v: np.column_stack(per_var[v]) for v in METEO_VARS}, np.array(elev, float).reshape(NLAT, NLON)
 
 def meteo_storico():
-    cache = os.path.join(OUT_DIR, f"meteo_{ANNO_MIN_METEO}_{PASSO_METEO}_{OGGI:%Y%m%d}.npz")
+    # Cache fissa indipendente dalla data odierna per evitare ricaricamenti inutili e timeout
+    cache = os.path.join(OUT_DIR, f"meteo_{ANNO_MIN_METEO}_{PASSO_METEO}_storico.npz")
     if os.path.exists(cache):
+        print("   Caricamento storico meteo da cache locale...")
         z = np.load(cache, allow_pickle=True)
         return pd.to_datetime(z["date"]), {v: z[v] for v in METEO_VARS}, z["elev"]
+    
+    print("   Scaricamento storico meteo (operazione eseguita una sola volta)...")
     date_all, serie, elev = [], {v: [] for v in METEO_VARS}, None
     for a in range(ANNO_MIN_METEO, OGGI.year + 1):
         fine = min(pd.Timestamp(f"{a}-11-30"), OGGI - pd.Timedelta(days=7))
