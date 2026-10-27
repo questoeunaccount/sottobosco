@@ -1,0 +1,60 @@
+<?xml version="1.0"?>
+<gpx version="1.1" creator="GDAL 3.8.4" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.topografix.com/GPX/1/1" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+<metadata>
+<bounds minlat="46.217379899999997" minlon="10.576787299999999" maxlat="46.219371700000004" maxlon="10.578001100000000"/>                                       
+</metadata>
+<trk>
+  <name>O209A</name>
+  <desc>SENTIERO ATTREZZATO DEL PASSO MAROCCARO</desc>
+  <trkseg>
+    <trkpt lat="46.2173799" lon="10.5767873">
+    </trkpt>
+    <trkpt lat="46.2174207" lon="10.5769201">
+    </trkpt>
+    <trkpt lat="46.2175118" lon="10.5769477">
+    </trkpt>
+    <trkpt lat="46.2177183" lon="10.5770759">
+    </trkpt>
+    <trkpt lat="46.2179252" lon="10.5771707">
+    </trkpt>
+    <trkpt lat="46.2180865" lon="10.5771464">
+    </trkpt>
+    <trkpt lat="46.2181134" lon="10.5771893">
+    </trkpt>
+    <trkpt lat="46.2181615" lon="10.5772047">
+    </trkpt>
+    <trkpt lat="46.2183174" lon="10.5773833">
+    </trkpt>
+    <trkpt lat="46.2185001" lon="10.5774434">
+    </trkpt>
+    <trkpt lat="46.218523" lon="10.5774545">
+    </trkpt>
+    <trkpt lat="46.2188072" lon="10.5775405">
+    </trkpt>
+    <trkpt lat="46.2189303" lon="10.5776044">
+    </trkpt>
+    <trkpt lat="46.2190205" lon="10.577502">
+    </trkpt>
+    <trkpt lat="46.219059" lon="10.5774871">
+    </trkpt>
+    <trkpt lat="46.2190989" lon="10.5775018">
+    </trkpt>
+    <trkpt lat="46.219188" lon="10.5775769">
+    </trkpt>
+    <trkpt lat="46.2192362" lon="10.5776426">
+    </trkpt>
+    <trkpt lat="46.21924460000001" lon="10.5776989">
+    </trkpt>
+    <trkpt lat="46.2192613" lon="10.5777204">
+    </trkpt>
+    <trkpt lat="46.2193058" lon="10.5777325">
+    </trkpt>
+    <trkpt lat="46.2193337" lon="10.5777808">
+    </trkpt>
+    <trkpt lat="46.2193459" lon="10.5778379">
+    </trkpt>
+    <trkpt lat="46.2193717" lon="10.5780011">
+    </trkpt>
+  </trkseg>
+</trk>
+</gpx>

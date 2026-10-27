@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<gpx version="1.1" creator="GDAL 3.8.4" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.topografix.com/GPX/1/1" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+<metadata>
+<bounds minlat="46.235279300000002" minlon="10.984316500000000" maxlat="46.237286299999987" maxlon="10.991553100000003"/>                                       
+</metadata>
+<trk>
+  <name>O361A</name>
+  <trkseg>
+    <trkpt lat="46.2352793" lon="10.9843165">
+    </trkpt>
+    <trkpt lat="46.2354908" lon="10.9849226">
+    </trkpt>
+    <trkpt lat="46.2357875" lon="10.9853247">
+    </trkpt>
+    <trkpt lat="46.2360363" lon="10.9854966">
+    </trkpt>
+    <trkpt lat="46.2364036" lon="10.985797">
+    </trkpt>
+    <trkpt lat="46.2365891" lon="10.9860009">
+    </trkpt>
+    <trkpt lat="46.236789499999986" lon="10.9861028">
+    </trkpt>
+    <trkpt lat="46.237168" lon="10.9865802">
+    </trkpt>
+    <trkpt lat="46.237286299999987" lon="10.9869872">
+    </trkpt>
+    <trkpt lat="46.2372607" lon="10.9872669">
+    </trkpt>
+    <trkpt lat="46.2369045" lon="10.9885275">
+    </trkpt>
+    <trkpt lat="46.2369565" lon="10.9893107">
+    </trkpt>
+    <trkpt lat="46.2369194" lon="10.9899652">
+    </trkpt>
+    <trkpt lat="46.2369936" lon="10.9907001">
+    </trkpt>
+    <trkpt lat="46.2371717" lon="10.9913814">
+    </trkpt>
+    <trkpt lat="46.2371309" lon="10.9915531">
+    </trkpt>
+  </trkseg>
+</trk>
+</gpx>

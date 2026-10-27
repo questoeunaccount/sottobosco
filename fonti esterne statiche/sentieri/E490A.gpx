@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<gpx version="1.1" creator="GDAL 3.8.4" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.topografix.com/GPX/1/1" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+<metadata>
+<bounds minlat="46.217754199999995" minlon="11.155471400000000" maxlat="46.218580799999991" maxlon="11.157581100000000"/>                                       
+</metadata>
+<trk>
+  <name>E490A</name>
+  <desc>SENTIERO NORMALE DI RIENTRO</desc>
+  <trkseg>
+    <trkpt lat="46.2181435" lon="11.1554714">
+    </trkpt>
+    <trkpt lat="46.2182591" lon="11.1556833">
+    </trkpt>
+    <trkpt lat="46.2182859" lon="11.1558575">
+    </trkpt>
+    <trkpt lat="46.218378" lon="11.1559699">
+    </trkpt>
+    <trkpt lat="46.2185305" lon="11.156131">
+    </trkpt>
+    <trkpt lat="46.2185808" lon="11.1564521">
+    </trkpt>
+    <trkpt lat="46.218409" lon="11.1567123">
+    </trkpt>
+    <trkpt lat="46.2181452" lon="11.1567153">
+    </trkpt>
+    <trkpt lat="46.2180638" lon="11.1567786">
+    </trkpt>
+    <trkpt lat="46.2180773" lon="11.1569998">
+    </trkpt>
+    <trkpt lat="46.218197" lon="11.1571595">
+    </trkpt>
+    <trkpt lat="46.2182617" lon="11.1572827">
+    </trkpt>
+    <trkpt lat="46.2181061" lon="11.1574704">
+    </trkpt>
+    <trkpt lat="46.217875" lon="11.1575496">
+    </trkpt>
+    <trkpt lat="46.2177542" lon="11.1575811">
+    </trkpt>
+  </trkseg>
+</trk>
+</gpx>
