@@ -205,12 +205,28 @@ def gbif_occ(extra, max_rec=None):
     out, offset = [], 0
     while True:
         p = dict(PARAM_BASE, **extra, limit=300, offset=offset)
-        r = requests.get("https://api.gbif.org/v1/occurrence/search", params=p, timeout=120)
-        r.raise_for_status()
+        
+        for tentativo in range(6):
+            try:
+                r = requests.get("https://api.gbif.org/v1/occurrence/search", params=p, timeout=120)
+                if r.status_code == 429:
+                    print(f"   [429 GBIF] Rallentamento richiesto, attesa di {10 * (tentativo + 1)} secondi...")
+                    time.sleep(10 * (tentativo + 1))
+                    continue
+                r.raise_for_status()
+                break
+            except Exception as e:
+                if tentativo == 5: raise e
+                time.sleep(5 * (tentativo + 1))
+        else:
+            raise RuntimeError("GBIF limite 429 superato persistentemente.")
+
         j = r.json()
         out.extend(j.get("results", []))
         offset += 300
         if j.get("endOfRecords") or offset >= 99000 or (max_rec and len(out) >= max_rec): break
+        time.sleep(0.5)  # Breve pausa di cortesia tra una pagina e l'altra
+        
     return out[:max_rec] if max_rec else out
 
 def eventi(records):
