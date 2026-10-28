@@ -82,7 +82,7 @@ print("1/9 Confine provinciale e griglia...")
 def carica_confine():
     if CONFINE_PATH:
         g = gpd.read_file(CONFINE_PATH).to_crs(CRS)
-        return gpd.GeoDataFrame(geometry=[g.unary_union], crs=CRS)
+        return gpd.GeoDataFrame(geometry=[unary_union(list(g.geometry))], crs=CRS)
     r = requests.get(
         "https://nominatim.openstreetmap.org/search",
         params={"q": "Provincia di Trento", "countrycodes": "it", "format": "geojson", "polygon_geojson": 1, "limit": 10},
@@ -172,7 +172,8 @@ with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
     dem = riempi_nan(carica_dem())
     try:
         bosco, feat_bosco = carica_tipi_forestali()
-    except Exception:
+    except Exception as e:
+        print(f"   ATTENZIONE tipi forestali non disponibili, uso tutto il territorio: {e}")
         bosco, feat_bosco = np.ones((H, W), dtype=bool), {}
     feat_suolo = {}
     if USA_SOILGRIDS:
@@ -181,7 +182,7 @@ with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
                 with rasterio.open(f"/vsicurl/https://files.isric.org/soilgrids/latest/data/{var}/{var}_5-15cm_mean.vrt") as src:
                     a = su_griglia(src, Resampling.bilinear)
                 if not np.isnan(a).all(): feat_suolo[nome] = riempi_nan(a)
-            except Exception: pass
+            except Exception as e: print(f"   ATTENZIONE suolo {var} non disponibile: {e}")
 
 dy, dx = np.gradient(dem, RISOLUZIONE)
 aspetto = np.arctan2(-dx, dy)
@@ -360,8 +361,17 @@ def feature_meteo(P, Tm, Tn, RH):
     
     return {n: f[n].astype("float32").reshape(T, NLAT, NLON) for n in NOMI_METEO}
 
+def feature_meteo_stagioni(serie, date):
+    parts = {n: [] for n in NOMI_METEO}
+    for a in np.unique(date.year):
+        m = np.asarray(date.year == a)
+        f = feature_meteo(serie["precipitation_sum"][m], serie["temperature_2m_mean"][m],
+                          serie["temperature_2m_min"][m], serie["relative_humidity_2m_mean"][m])
+        for n in NOMI_METEO: parts[n].append(f[n])
+    return {n: np.concatenate(parts[n], axis=0) for n in NOMI_METEO}
+
 date_st, serie_st, elev_st = meteo_storico()
-F_st = feature_meteo(serie_st["precipitation_sum"], serie_st["temperature_2m_mean"], serie_st["temperature_2m_min"], serie_st["relative_humidity_2m_mean"])
+F_st = feature_meteo_stagioni(serie_st, date_st)
 
 def pesi_bilin(lat, lon):
     fi = np.clip((np.asarray(lat) - lats[0]) / PASSO_METEO, 0, NLAT - 1.000001)
@@ -396,40 +406,64 @@ def matrice_eventi(ev):
 ev_p, Xp = matrice_eventi(ev_pres)
 ev_b, Xb = matrice_eventi(ev_bg)
 
-grid_presenze = np.zeros((H, W), dtype="float32")
-r_p, c_p = np.divmod(ev_p.idx.values, W)
-np.add.at(grid_presenze, (r_p, c_p), 1.0)
-trend_spaziale_grid = gaussian_filter(grid_presenze, sigma=15.0)
-trend_spaziale_grid = (trend_spaziale_grid - trend_spaziale_grid.min()) / (trend_spaziale_grid.max() - trend_spaziale_grid.min() + 1e-8)
-
-trend_valid = trend_spaziale_grid.ravel()[valid_idx][:, None]
-Xp_spat = np.hstack([Xp, trend_spaziale_grid.ravel()[ev_p.idx.values][:, None]])
-Xb_spat = np.hstack([Xb, trend_spaziale_grid.ravel()[ev_b.idx.values][:, None]])
-X_spat = np.vstack([Xp_spat, Xb_spat])
-
 print("6/9 Addestramento modelli con split 90/10 stratificato...")
 X = np.vstack([Xp, Xb])
 y = np.concatenate([np.ones(len(Xp)), np.zeros(len(Xb))])
+n_p = len(Xp)
+cell_pres = ev_p.idx.values
+cell_all = np.concatenate([ev_p.idx.values, ev_b.idx.values])
+RF_KW = dict(n_estimators=400, min_samples_leaf=3, max_features="sqrt",
+             class_weight="balanced_subsample", n_jobs=-1, random_state=SEED)
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.10, random_state=SEED, stratify=y)
-X_train_spat, X_test_spat, _, _ = train_test_split(X_spat, y, test_size=0.10, random_state=SEED, stratify=y)
+def griglia_trend(celle):
+    g = np.zeros((H, W), dtype="float32")
+    r_, c_ = np.divmod(celle, W)
+    np.add.at(g, (r_, c_), 1.0)
+    g = gaussian_filter(g, sigma=15.0)
+    return ((g - g.min()) / (g.max() - g.min() + 1e-8)).astype("float32")
 
-def calcola_metriche(model_probs, y_true):
-    fpr, tpr, thresholds = roc_curve(y_true, model_probs)
-    j_scores = tpr - fpr
-    best_thresh = thresholds[np.argmax(j_scores)]
-    y_pred = (model_probs >= best_thresh).astype(int)
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    acc = (tp + tn) / max((tp + tn + fp + fn), 1)
-    sens = tp / max((tp + fn), 1)
-    spec = tn / max((tn + fp), 1)
-    prec = tp / max((tp + fp), 1)
-    auc = roc_auc_score(y_true, model_probs)
+def trend_oof(celle, n_fold=5):
+    # ogni presenza riceve il trend calcolato SENZA le presenze del proprio fold (niente leakage)
+    out = np.zeros(len(celle), dtype="float32")
+    fold = rng.integers(0, n_fold, len(celle))
+    for f in range(n_fold):
+        m = fold == f
+        out[m] = griglia_trend(celle[~m]).ravel()[celle[m]]
+    return out
+
+idx_tutti = np.arange(len(y))
+tr_i, te_i = train_test_split(idx_tutti, test_size=0.10, random_state=SEED, stratify=y)
+X_train, X_test, y_train, y_test = X[tr_i], X[te_i], y[tr_i], y[te_i]
+
+# feature spaziale per la valutazione: costruita solo con le presenze di training
+tr_pres = tr_i[tr_i < n_p]
+trend_eval = griglia_trend(cell_pres[tr_pres]).ravel()[cell_all].astype("float32")
+trend_eval[tr_pres] = trend_oof(cell_pres[tr_pres])
+X_spat = np.hstack([X, trend_eval[:, None]])
+X_train_spat, X_test_spat = X_spat[tr_i], X_spat[te_i]
+
+def soglia_youden(probs, y_true):
+    fpr, tpr, th = roc_curve(y_true, probs)
+    return th[np.argmax(tpr - fpr)]
+
+def calcola_metriche(p_tr, y_tr, p_te, y_te):
+    # soglia scelta sul training (OOB per le foreste), poi riportata sul test
+    s_ = soglia_youden(p_tr, y_tr)
+    y_pred = (p_te >= s_).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_te, y_pred, labels=[0, 1]).ravel()
+    acc = (tp + tn) / max(tp + tn + fp + fn, 1)
+    sens = tp / max(tp + fn, 1)
+    spec = tn / max(tn + fp, 1)
+    prec = tp / max(tp + fp, 1)
+    auc = roc_auc_score(y_te, p_te)
     return {"auc": round(float(auc), 3), "accuratezza": round(float(acc * 100), 1),
-            "sensibilita": round(float(sens * 100), 1), "specificita": round(float(spec * 100), 1), "precisione": round(float(prec * 100), 1)}
+            "sensibilita": round(float(sens * 100), 1), "specificita": round(float(spec * 100), 1),
+            "precisione": round(float(prec * 100), 1)}
 
-rf_model = RandomForestClassifier(n_estimators=400, min_samples_leaf=3, max_features="sqrt", class_weight="balanced_subsample", n_jobs=-1, random_state=SEED).fit(X_train, y_train)
-metriche_rf = calcola_metriche(rf_model.predict_proba(X_test)[:, 1], y_test)
+rf_model = RandomForestClassifier(oob_score=True, **RF_KW).fit(X_train, y_train)
+p_rf_tr = np.nan_to_num(rf_model.oob_decision_function_[:, 1])
+p_rf_te = rf_model.predict_proba(X_test)[:, 1]
+metriche_rf = calcola_metriche(p_rf_tr, y_train, p_rf_te, y_test)
 
 X_mean, X_std = X_train.mean(axis=0), X_train.std(axis=0) + 1e-8
 X_train_scaled, X_test_scaled = (X_train - X_mean) / X_std, (X_test - X_mean) / X_std
@@ -443,13 +477,29 @@ with pm.Model() as bayesian_model:
 
 alpha_mean = float(trace.posterior["alpha"].values.mean())
 beta_mean = trace.posterior["beta"].values.mean(axis=(0, 1))
-metriche_bayes = calcola_metriche(1 / (1 + np.exp(-(alpha_mean + np.dot(X_test_scaled, beta_mean)))), y_test)
+sigm = lambda z: 1 / (1 + np.exp(-z))
+p_bay_tr = sigm(alpha_mean + X_train_scaled @ beta_mean)
+p_bay_te = sigm(alpha_mean + X_test_scaled @ beta_mean)
+metriche_bayes = calcola_metriche(p_bay_tr, y_train, p_bay_te, y_test)
 
-rf_spatial = RandomForestClassifier(n_estimators=400, min_samples_leaf=3, max_features="sqrt", class_weight="balanced_subsample", n_jobs=-1, random_state=SEED).fit(X_train_spat, y_train)
-metriche_spatial = calcola_metriche(rf_spatial.predict_proba(X_test_spat)[:, 1], y_test)
+rf_spatial = RandomForestClassifier(oob_score=True, **RF_KW).fit(X_train_spat, y_train)
+p_sp_tr = np.nan_to_num(rf_spatial.oob_decision_function_[:, 1])
+p_sp_te = rf_spatial.predict_proba(X_test_spat)[:, 1]
+metriche_spatial = calcola_metriche(p_sp_tr, y_train, p_sp_te, y_test)
 
-rf_model_full = RandomForestClassifier(n_estimators=400, min_samples_leaf=3, max_features="sqrt", class_weight="balanced_subsample", n_jobs=-1, random_state=SEED).fit(X, y)
-rf_spatial_full = RandomForestClassifier(n_estimators=400, min_samples_leaf=3, max_features="sqrt", class_weight="balanced_subsample", n_jobs=-1, random_state=SEED).fit(X_spat, y)
+# stacking valutato davvero (prima riportava le metriche dell'RF)
+p_st_tr = 0.5 * (p_rf_tr + p_bay_tr)
+p_st_te = 0.5 * (p_rf_te + p_bay_te)
+metriche_stacking = calcola_metriche(p_st_tr, y_train, p_st_te, y_test)
+
+# modelli finali su tutti i dati
+rf_model_full = RandomForestClassifier(**RF_KW).fit(X, y)
+grid_full = griglia_trend(cell_pres)
+trend_full = np.concatenate([trend_oof(cell_pres), grid_full.ravel()[ev_b.idx.values]])
+X_spat_full = np.hstack([X, trend_full[:, None]])
+rf_spatial_full = RandomForestClassifier(**RF_KW).fit(X_spat_full, y)
+trend_spaziale_grid = grid_full
+trend_valid = grid_full.ravel()[valid_idx][:, None]
 
 print("7/9 Previsioni meteo aggiornate per i 3 giorni target...")
 def open_meteo_prev(url, la, lo):
@@ -492,7 +542,6 @@ for d in range(3):
     stacking_giorni.append(0.5 * rf_giorni[-1] + 0.5 * sc_bayes_norm)
     date_giorni.append(giorno)
 
-metriche_stacking = metriche_rf
 
 print("8/9 Generazione poligoni e lettura GPX sentieri SAT...")
 def genera_poligoni(score_list, classi_config):
@@ -561,7 +610,7 @@ def a_geojson(gdf):
     return {"type": "FeatureCollection", "features": feats}
 
 world_box = Polygon([(-180, -90), (180, -90), (180, 90), (-180, 90), (-180, -90)])
-trentino_wgs = confine.to_crs("EPSG:4326").geometry.unary_union
+trentino_wgs = unary_union(list(confine.to_crs("EPSG:4326").geometry))
 mask_poly = world_box.difference(trentino_wgs)
 mask_geojson = {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": mask_poly.__geo_interface__, "properties": {}}]}
 
@@ -575,7 +624,7 @@ dati_web = {
         "rf": {"titolo": "Idoneità Relativa (RF)", "metriche": metriche_rf, "classi": [{"etichetta": c[5], "colore": c[2], "tipo": c[4]} for c in CLASSI_RF],
                "giorni": [{"etichetta": ETICHETTE[d], "data": date_giorni[d].strftime("%d/%m"), "km2": km2_rf[d],
                            "classi": [a_geojson(poly_rf[d][poly_rf[d].classe == c[5]]) if poly_rf[d] is not None and not poly_rf[d].empty else {"type": "FeatureCollection", "features": []} for c in CLASSI_RF]} for d in range(3)]},
-        "bayes": {"titolo": "Probabilità Reale (Bayes)", "metriche": metriche_bayes, "classi": [{"etichetta": c[5], "colore": c[2], "tipo": c[4]} for c in CLASSI_BAYES],
+        "bayes": {"titolo": "Probabilità stimata (Bayes)", "metriche": metriche_bayes, "classi": [{"etichetta": c[5], "colore": c[2], "tipo": c[4]} for c in CLASSI_BAYES],
                   "giorni": [{"etichetta": ETICHETTE[d], "data": date_giorni[d].strftime("%d/%m"), "km2": km2_bayes[d],
                               "classi": [a_geojson(poly_bayes[d][poly_bayes[d].classe == c[5]]) if poly_bayes[d] is not None and not poly_bayes[d].empty else {"type": "FeatureCollection", "features": []} for c in CLASSI_BAYES]} for d in range(3)]},
         "spatial": {"titolo": "Spatial Machine Learning", "metriche": metriche_spatial, "classi": [{"etichetta": c[5], "colore": c[2], "tipo": c[4]} for c in CLASSI_IBRIDE],
@@ -589,7 +638,7 @@ dati_web = {
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Sottobosco - Trentino</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -606,6 +655,7 @@ HTML_CONTENT = """<!DOCTYPE html>
  hr{border:0;border-top:1px solid #ccc;margin:6px 0}
  small{color:#555}
  .btn-gps{background:#fff;border:2px solid rgba(0,0,0,0.2);border-radius:6px;width:36px;height:36px;line-height:32px;text-align:center;font-size:18px;cursor:pointer;box-shadow:0 1px 5px rgba(0,0,0,0.4);display:block;text-decoration:none;color:#000;}
+.btn-gps.attivo{background:#1d4ed8;color:#fff;border-color:#1d4ed8}
 </style></head><body><div id="map"></div>
 <script>
 const D = __DATI__;
@@ -615,7 +665,7 @@ L.control.zoom({position: 'bottomright'}).addTo(map);
 const opentopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
   maxZoom: 17, attribution: 'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap'
 });
-const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:18});
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:18, attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, GIS User Community'});
 opentopo.addTo(map);
 L.control.layers({'OpenTopoMap': opentopo, 'Satellite': sat}, null, {position:'topright'}).addTo(map);
 
@@ -685,7 +735,7 @@ pannello.onAdd = () => {
                 '<hr><b>Modello:</b>' +
                 '<select id="sel-modello">' +
                   '<option value="rf">1. Idoneità Relativa (RF)</option>' +
-                  '<option value="bayes">2. Probabilità Reale (Bayes)</option>' +
+                  '<option value="bayes">2. Probabilità stimata (Bayes)</option>' +
                   '<option value="spatial">3. Spatial Machine Learning</option>' +
                   '<option value="stacking">4. Ensemble Stacking</option>' +
                 '</select>' +
@@ -726,37 +776,84 @@ D.modelli.rf.giorni.forEach((g, i) => {
   containerGiorni.appendChild(b);
 });
 
+const iconaGps = L.divIcon({className:'', iconSize:[40,40], iconAnchor:[20,20],
+  html:'<div id="freccia-gps" style="width:40px;height:40px;transition:transform .2s"><svg viewBox="0 0 40 40" width="40" height="40"><path d="M20 0 L28 17 L20 13 L12 17 Z" fill="#1d4ed8" fill-opacity="0.85" stroke="#fff" stroke-width="1.2"/><circle cx="20" cy="20" r="8" fill="#1d4ed8" stroke="#fff" stroke-width="3"/></svg></div>'});
+
 const gpsControl = L.Control.extend({
-  options: { position: 'topleft' },
+  options: { position: 'bottomright' },
   onAdd: function () {
     const btn = L.DomUtil.create('a', 'btn-gps');
     btn.innerHTML = '📍';
-    btn.title = 'Mostra mia posizione GPS';
-    let markerGPS = null;
-    let circleGPS = null;
-    
+    btn.title = 'Mostra la mia posizione in tempo reale';
+    let attivo = false, watchId = null, marker = null, cerchio = null, primaFix = true, bussolaAttiva = false;
+
+    function ruota(gradi) {
+      const f = document.getElementById('freccia-gps');
+      if (f && typeof gradi === 'number' && !isNaN(gradi)) f.style.transform = 'rotate(' + gradi + 'deg)';
+    }
+    function alOrientamento(e) {
+      let h = null;
+      if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;
+      else if (e.absolute && typeof e.alpha === 'number') h = (360 - e.alpha) % 360;
+      if (h !== null) { bussolaAttiva = true; ruota(h); }
+    }
+    function attivaBussola() {
+      // va chiamata dentro il click dell'utente: iOS 13+ chiede il permesso esplicitamente
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission()
+          .then(function (r) { if (r === 'granted') window.addEventListener('deviceorientation', alOrientamento, true); })
+          .catch(function () {});
+      } else if ('ondeviceorientationabsolute' in window) {
+        window.addEventListener('deviceorientationabsolute', alOrientamento, true);
+      }
+    }
+    function alPosizione(pos) {
+      const ll = [pos.coords.latitude, pos.coords.longitude];
+      const prec = pos.coords.accuracy;
+      if (!marker) {
+        marker = L.marker(ll, {icon: iconaGps, interactive: false}).addTo(map);
+        cerchio = L.circle(ll, {radius: prec, color: '#1d4ed8', weight: 1, fillOpacity: 0.1, interactive: false}).addTo(map);
+      } else {
+        marker.setLatLng(ll);
+        cerchio.setLatLng(ll).setRadius(prec);
+      }
+      if (primaFix) { map.setView(ll, Math.max(map.getZoom(), 15)); primaFix = false; }
+      else if (!map.getBounds().contains(ll)) map.panTo(ll);
+      // senza bussola: direzione di movimento dal GPS
+      if (!bussolaAttiva && typeof pos.coords.heading === 'number' && !isNaN(pos.coords.heading) && (pos.coords.speed || 0) > 0.5) ruota(pos.coords.heading);
+    }
+    function alErrore(e) {
+      if (e.code === 3) return; // timeout: il watch continua
+      const motivi = {1: 'permesso negato', 2: 'posizione non disponibile'};
+      alert('Impossibile rilevare la posizione GPS: ' + (motivi[e.code] || e.message));
+      spegni();
+    }
+    function spegni() {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      watchId = null; attivo = false; btn.classList.remove('attivo');
+      if (marker) { map.removeLayer(marker); marker = null; }
+      if (cerchio) { map.removeLayer(cerchio); cerchio = null; }
+      primaFix = true;
+    }
+    function accendi() {
+      if (!('geolocation' in navigator)) { alert('Geolocalizzazione non disponibile su questo browser.'); return; }
+      attivo = true; btn.classList.add('attivo');
+      attivaBussola();
+      watchId = navigator.geolocation.watchPosition(alPosizione, alErrore, {enableHighAccuracy: true, maximumAge: 3000, timeout: 20000});
+    }
     L.DomEvent.on(btn, 'click', function (e) {
-      L.DomEvent.stopPropagation(e);
-      L.DomEvent.preventDefault(e);
-      map.locate({setView: true, maxZoom: 16});
+      L.DomEvent.stopPropagation(e); L.DomEvent.preventDefault(e);
+      if (attivo) spegni(); else accendi();
     });
-    
-    map.on('locationfound', function(e) {
-      const radius = e.accuracy / 2;
-      if (markerGPS) { map.removeLayer(markerGPS); map.removeLayer(circleGPS); }
-      markerGPS = L.marker(e.latlng).addTo(map).bindPopup("Ti trovi qui (precisione: " + radius.toFixed(0) + "m)").openPopup();
-      circleGPS = L.circle(e.latlng, radius).addTo(map);
-    });
-    
-    map.on('locationerror', function(e) {
-      alert("Impossibile rilevare la posizione GPS: " + e.message);
-    });
-    
     return btn;
   }
 });
 map.addControl(new gpsControl());
 
+if (window.matchMedia('(max-width: 700px)').matches) {
+  document.querySelector('.pannello').classList.add('compresso');
+  document.getElementById('btn-compri').textContent = '+';
+}
 aggiornaMappa();
 </script></body></html>"""
 
