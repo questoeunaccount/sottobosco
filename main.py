@@ -73,6 +73,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, confusion_matrix, roc_curve
 import pymc as pm
+import arviz as az
 
 warnings.filterwarnings("ignore")
 OGGI = pd.Timestamp.now(tz="Europe/Rome").tz_localize(None).normalize()
@@ -168,13 +169,20 @@ def carica_tipi_forestali():
         if m.any(): gruppi["tf_" + nome] = rasterizza(gdf.geometry[m]).astype("float32")
     return bosco_, gruppi
 
+def carica_bosco_worldcover():
+    lat0 = int(math.floor(latmin / 3) * 3)
+    lon0 = int(math.floor(lonmin / 3) * 3)
+    url = f"https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N{lat0:02d}E{lon0:03d}_Map.tif"
+    with rasterio.open("/vsicurl/" + url) as src:
+        return np.nan_to_num(su_griglia(src, Resampling.mode)) == 10
+
 with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
     dem = riempi_nan(carica_dem())
     try:
         bosco, feat_bosco = carica_tipi_forestali()
     except Exception as e:
-        print(f"   ATTENZIONE tipi forestali non disponibili, uso tutto il territorio: {e}")
-        bosco, feat_bosco = np.ones((H, W), dtype=bool), {}
+        print(f"   ATTENZIONE tipi forestali non disponibili ({e}): uso ESA WorldCover (classe 10)")
+        bosco, feat_bosco = carica_bosco_worldcover(), {}  # se anche questo fallisce, lo script si ferma
     feat_suolo = {}
     if USA_SOILGRIDS:
         for var, nome in [("phh2o", "suolo_ph"), ("sand", "suolo_sabbia"), ("soc", "suolo_carbonio")]:
@@ -473,8 +481,10 @@ with pm.Model() as bayesian_model:
     beta = pm.Normal("beta", mu=0, sigma=2, shape=X_train_scaled.shape[1])
     mu_lin = alpha + pm.math.dot(X_train_scaled, beta)
     y_obs = pm.Bernoulli("y_obs", p=pm.math.sigmoid(mu_lin), observed=y_train)
-    trace = pm.sample(draws=600, tune=600, chains=2, target_accept=0.85, random_seed=SEED, return_inferencedata=True)
+    trace = pm.sample(draws=800, tune=800, chains=2, target_accept=0.9, random_seed=SEED, return_inferencedata=True)
 
+summ = az.summary(trace, var_names=["alpha", "beta"])
+print(f"   Bayes convergenza: R-hat max {summ['r_hat'].max():.3f}, ESS bulk min {summ['ess_bulk'].min():.0f}")
 alpha_mean = float(trace.posterior["alpha"].values.mean())
 beta_mean = trace.posterior["beta"].values.mean(axis=(0, 1))
 sigm = lambda z: 1 / (1 + np.exp(-z))
