@@ -285,7 +285,7 @@ def scarica_serie(url, extra):
     return date_, {v: np.column_stack(per_var[v]) for v in METEO_VARS}, np.array(elev, float).reshape(NLAT, NLON)
 
 def meteo_storico():
-    cache_path = "fonti_esterne_statiche/storico meteo/meteo_2017_2024_storico.npz"
+    cache_path = "fonti esterne statiche/storico meteo/meteo_2017_2024_storico.npz"
     if not os.path.exists(cache_path):
         raise FileNotFoundError(f"Manca il file di storico in {cache_path}")
     
