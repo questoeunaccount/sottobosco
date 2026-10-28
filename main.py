@@ -517,7 +517,7 @@ poly_bayes, km2_bayes = genera_poligoni(bayes_giorni, CLASSI_BAYES)
 poly_spatial, km2_spatial = genera_poligoni(spatial_giorni, CLASSI_IBRIDE)
 poly_stacking, km2_stacking = genera_poligoni(stacking_giorni, CLASSI_IBRIDE)
 
-gpx_files = glob.glob("fonti_esterne_statiche/sentieri/*.gpx")
+gpx_files = glob.glob("fonti esterne statiche/sentieri/*.gpx")
 cai_gdf = None
 if gpx_files:
     gpx_list = []
