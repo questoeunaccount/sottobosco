@@ -7,7 +7,7 @@ import pandas as pd
 
 ANNO_MIN = 2017
 ANNO_MAX = 2024
-PASSO_METEO = 0.4
+PASSO_METEO = 0.2
 
 METEO_VARS = [
     "precipitation_sum",
