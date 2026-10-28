@@ -2,8 +2,14 @@ name: Aggiorna Mappa Funghi Giornaliera
 
 on:
   schedule:
-    - cron: '0 3 * * *'  # Esegue ogni giorno alle 06:00 UTC
-  workflow_dispatch:      # Permette di avviarlo manualmente quando vuoi
+    # GitHub usa solo UTC: queste due voci coprono le 03:00 italiane in estate e in inverno
+    - cron: '0 1 * * *'   # ora legale (UTC+2): 03:00 Roma
+    - cron: '0 2 * * *'   # ora solare (UTC+1): 03:00 Roma
+  workflow_dispatch:      # avvio manuale, sempre eseguito
+
+concurrency:
+  group: aggiorna-mappa
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -14,21 +20,36 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4
 
+      - name: Controllo ora italiana
+        id: ora
+        run: |
+          ORA=$(TZ=Europe/Rome date +%H)
+          echo "Ora italiana: $ORA"
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "$ORA" != "03" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Configurazione ambiente Python
+        if: steps.ora.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Installazione dipendenze
+        if: steps.ora.outputs.run == 'true'
         run: |
           sudo apt-get update && sudo apt-get install -y libspatialindex-dev
           pip install --upgrade pip
-          pip install rasterio geopandas pymc arviz shapely scikit-learn requests
+          pip install rasterio geopandas pymc arviz shapely scikit-learn scipy pandas numpy requests
 
       - name: Esecuzione script predittivo
+        if: steps.ora.outputs.run == 'true'
         run: python main.py
 
       - name: Pubblicazione automatica modifiche
+        if: steps.ora.outputs.run == 'true'
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
