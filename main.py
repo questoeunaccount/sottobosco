@@ -169,20 +169,25 @@ def carica_tipi_forestali():
         if m.any(): gruppi["tf_" + nome] = rasterizza(gdf.geometry[m]).astype("float32")
     return bosco_, gruppi
 
-def carica_bosco_worldcover():
+def carica_worldcover():
+    # mappa delle classi ESA WorldCover (10 = arbusti/alberi, 50 = urbano, 80 = acqua) sulla griglia del progetto
     lat0 = int(math.floor(latmin / 3) * 3)
     lon0 = int(math.floor(lonmin / 3) * 3)
     url = f"https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N{lat0:02d}E{lon0:03d}_Map.tif"
     with rasterio.open("/vsicurl/" + url) as src:
-        return np.nan_to_num(su_griglia(src, Resampling.mode)) == 10
+        return np.nan_to_num(su_griglia(src, Resampling.mode)).round().astype(np.int16)
 
 with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
     dem = riempi_nan(carica_dem())
+    # WorldCover (copertura arborea) è sempre usato: esclude acque, aree urbane e altro non boscato
+    classi_wc = carica_worldcover()
+    bosco_wc = classi_wc == 10
     try:
         bosco, feat_bosco = carica_tipi_forestali()
+        bosco = bosco & bosco_wc
     except Exception as e:
-        print(f"   ATTENZIONE tipi forestali non disponibili ({e}): uso ESA WorldCover (classe 10)")
-        bosco, feat_bosco = carica_bosco_worldcover(), {}  # se anche questo fallisce, lo script si ferma
+        print(f"   ATTENZIONE tipi forestali PAT non disponibili ({e}): bosco solo da WorldCover")
+        bosco, feat_bosco = bosco_wc, {}
     feat_suolo = {}
     if USA_SOILGRIDS:
         for var, nome in [("phh2o", "suolo_ph"), ("sand", "suolo_sabbia"), ("soc", "suolo_carbonio")]:
@@ -200,7 +205,19 @@ feat_statiche.update(feat_bosco)
 feat_statiche.update(feat_suolo)
 nomi_statici = list(feat_statiche.keys())
 
-valid = provincia & bosco
+valid = provincia & bosco & ~np.isin(classi_wc, [50, 80])
+print("   Classi WorldCover presenti in provincia:", dict(zip(*np.unique(classi_wc[provincia], return_counts=True))))
+print(f"   Celle nella maschera del bosco: {int(valid.sum())} ({valid.sum() / max(provincia.sum(), 1) * 100:.1f}% della provincia)")
+
+def controllo_punto(lat, lon, nome):
+    x, y = tr_dir.transform(lon, lat)
+    r, c = rowcol(transform, x, y)
+    r, c = int(np.asarray(r).item()), int(np.asarray(c).item())
+    print(f"   Controllo {nome}: classe WorldCover = {int(classi_wc[r, c])}, in maschera = {bool(valid[r, c])}")
+
+controllo_punto(46.14, 10.93, "lago di Molveno (deve essere False)")
+controllo_punto(46.05, 11.27, "lago di Caldonazzo (deve essere False)")
+controllo_punto(46.07, 11.12, "centro di Trento (deve essere False)")
 valid_idx = np.flatnonzero(valid.ravel())
 X_valid = np.column_stack([feat_statiche[n].ravel()[valid_idx] for n in nomi_statici]).astype("float32")
 dem_cella = dem.ravel()[valid_idx]
