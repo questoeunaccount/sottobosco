@@ -2,9 +2,9 @@ name: Aggiorna Mappa Funghi Giornaliera
 
 on:
   schedule:
-    # GitHub usa solo UTC: queste due voci coprono le 03:00 italiane in estate e in inverno
-    - cron: '0 1 * * *'   # ora legale (UTC+2): 03:00 Roma
-    - cron: '0 2 * * *'   # ora solare (UTC+1): 03:00 Roma
+    # GitHub usa solo UTC e può ritardare i run: il controllo sulla data
+    # decide se rigenerare la mappa, quindi l'orario non conta.
+    - cron: '0 * * * *'   # ogni ora
   workflow_dispatch:      # avvio manuale, sempre eseguito
 
 concurrency:
@@ -14,45 +14,72 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     permissions:
       contents: write
     steps:
       - name: Checkout del codice
         uses: actions/checkout@v4
 
-      - name: Controllo ora italiana
-        id: ora
+      - name: Controllo data aggiornamento
+        id: controllo
         run: |
-          ORA=$(TZ=Europe/Rome date +%H)
-          echo "Ora italiana: $ORA"
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "$ORA" != "03" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
+          # Data di oggi in Italia, formato YYYY-MM-DD (ordinabile come stringa)
+          DATA_AGGIORNAMENTO=$(TZ=Europe/Rome date +%F)
+
+          # Data dell'ultima esecuzione, salvata nel repository.
+          # Se il file non esiste (primo run), si considera 1970-01-01.
+          ULTIMA_ESECUZIONE=$(cat ultima_esecuzione.txt 2>/dev/null || echo "1970-01-01")
+
+          echo "Data aggiornamento: $DATA_AGGIORNAMENTO"
+          echo "Ultima esecuzione:  $ULTIMA_ESECUZIONE"
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Avvio manuale: esecuzione forzata."
+            RUN=true
+          elif [[ "$DATA_AGGIORNAMENTO" > "$ULTIMA_ESECUZIONE" ]]; then
+            echo "Dati nuovi rispetto all'ultima esecuzione: si rigenera."
+            RUN=true
           else
-            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Nessun aggiornamento: nulla da fare."
+            RUN=false
           fi
 
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
+          echo "data_aggiornamento=$DATA_AGGIORNAMENTO" >> "$GITHUB_OUTPUT"
+
       - name: Configurazione ambiente Python
-        if: steps.ora.outputs.run == 'true'
+        if: steps.controllo.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Installazione dipendenze
-        if: steps.ora.outputs.run == 'true'
+        if: steps.controllo.outputs.run == 'true'
         run: |
           sudo apt-get update && sudo apt-get install -y libspatialindex-dev
           pip install --upgrade pip
           pip install rasterio geopandas pymc arviz shapely scikit-learn scipy pandas numpy requests
+          pip install jupyter nbconvert ipykernel
 
-      - name: Esecuzione script predittivo
-        if: steps.ora.outputs.run == 'true'
-        run: python main.py
+      - name: Esecuzione notebook predittivo
+        if: steps.controllo.outputs.run == 'true'
+        run: |
+          # Esegue main.ipynb senza modificarlo: l'output esecutivo va in /tmp.
+          # Il notebook scrive index.html nella radice del repository.
+          jupyter nbconvert --to notebook --execute main.ipynb \
+            --output-dir=/tmp --output=esecuzione.ipynb \
+            --ExecutePreprocessor.timeout=-1
+
+      - name: Registrazione data ultima esecuzione
+        if: steps.controllo.outputs.run == 'true'
+        run: echo "${{ steps.controllo.outputs.data_aggiornamento }}" > ultima_esecuzione.txt
 
       - name: Pubblicazione automatica modifiche
-        if: steps.ora.outputs.run == 'true'
+        if: steps.controllo.outputs.run == 'true'
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
-          git add index.html
+          git add index.html ultima_esecuzione.txt
           git commit -m "Aggiornamento automatico mappa [skip ci]" || echo "Nessuna modifica da committare"
           git push
